@@ -27,7 +27,7 @@ struct BooksView: View {
 		}
 		// hidden on the website (or another device) by a signed-in member: hide it here too
 		.task {
-			if !hidden, Account.shared.signedIn, case .value(let v) = await Account.shared.get("pdt_vid_hidden"), v == "1" {
+			if !hidden, Account.shared.signedIn, let me = await Account.shared.me(), (me["prefs"] as? [String: Any])?["video_hidden"] as? Bool == true {
 				UserDefaults.standard.set(true, forKey: "vidHidden"); hidden = true
 			}
 		}
@@ -40,7 +40,7 @@ struct BooksView: View {
 
 /// .vid: the explainer video's card (pdt_video_card): its thumbnail with "Watch the 2-minute
 /// tour" and a play button, opening the YouTube video; the x hides it for good (on the device, and
-/// for a signed-in member in the permacookie pdt_vid_hidden, which hides it on the website too)
+/// for a signed-in member in the site's member prefs (video_hidden), which hides it on the website too)
 struct VideoCard: View {
 	@Binding var hidden: Bool
 	@Environment(\.vw) private var vw
@@ -84,7 +84,7 @@ struct VideoCard: View {
 	private func hide() {
 		UserDefaults.standard.set(true, forKey: "vidHidden")
 		hidden = true
-		if Account.shared.signedIn { Task { await Account.shared.set("pdt_vid_hidden", "1") } }
+		if Account.shared.signedIn { Task { await Account.shared.api("PUT", "prefs", fields: ["video_hidden": "1"]) } }
 	}
 }
 

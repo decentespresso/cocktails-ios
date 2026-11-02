@@ -5,8 +5,8 @@ import UIKit
 
 /// The member's decentespresso.com account: OAuth sign-in (the /support/oauth2 Authorization Code +
 /// PKCE flow, as dcamp-ios; client "cocktails-ios", redirect decentcocktails://auth), the bearer
-/// token in the Keychain, and the permacookie calls the website's own scripts make
-/// (/support/api/permacookie_get.adp, permacookie_set.adp).
+/// token in the Keychain, and the calls to the member API (/cocktails/api/me). The older
+/// permacookie calls (/support/api/permacookie_get.adp, permacookie_set.adp) are kept for anything else.
 @MainActor
 final class Account: NSObject, ObservableObject, ASWebAuthenticationPresentationContextProviding {
 	static let shared = Account()
@@ -132,6 +132,37 @@ final class Account: NSObject, ObservableObject, ASWebAuthenticationPresentation
 		if !ok { lapsed() }
 		return ok
 	}
+	// MARK: member API (/cocktails/api/me, lib/cocktails_member.tcl on the site)
+
+	/// everything the site keeps for the member: liked, made, notes, bar, prefs, following
+	func me() async -> [String: Any]? {
+		guard let token else { return nil }
+		var req = URLRequest(url: server.appendingPathComponent("cocktails/api/me"))
+		req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+		req.cachePolicy = .reloadIgnoringLocalCacheData
+		guard let (data, resp) = try? await URLSession.shared.data(for: req), let h = resp as? HTTPURLResponse else { return nil }
+		if h.statusCode == 401 { lapsed(); return nil }
+		guard h.statusCode == 200 else { return nil }
+		return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+	}
+	/// one change: PUT / DELETE / POST /cocktails/api/me/<path>, with form fields
+	@discardableResult
+	func api(_ method: String, _ path: String, query: [String: String] = [:], fields: [String: String] = [:]) async -> Bool {
+		guard let token else { return false }
+		var c = URLComponents(url: server.appendingPathComponent("cocktails/api/me/" + path), resolvingAgainstBaseURL: false)!
+		if !query.isEmpty { c.queryItems = query.map { .init(name: $0.key, value: $0.value) } }
+		var req = URLRequest(url: c.url!)
+		req.httpMethod = method
+		req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+		if !fields.isEmpty {
+			req.setValue("application/x-www-form-urlencoded; charset=utf-8", forHTTPHeaderField: "Content-Type")
+			req.httpBody = Self.form(fields)
+		}
+		guard let (_, resp) = try? await URLSession.shared.data(for: req), let h = resp as? HTTPURLResponse else { return false }
+		if h.statusCode == 401 { lapsed(); return false }
+		return h.statusCode == 200
+	}
+
 	/// the token stopped working (revoked, or the account closed): back to signed out
 	private func lapsed() {
 		Keychain.delete(keychainKey)

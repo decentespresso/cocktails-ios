@@ -1,10 +1,11 @@
 import Foundation
 import SwiftUI
 
-/// The signed-in member's cocktail data, in the same permacookies the website uses, so the app and
-/// the site stay one: pdt_wish / pdt_made (drink ids from every book), pdt_made_on ({id: unix
-/// seconds} when last made), pdt_notes ({id: comment}), pdt_bar (Your Bar) and pdt_hide_unmakeable.
-/// A copy is kept on the device so the lists show offline; each change is written straight back.
+/// The signed-in member's cocktail data, the same rows the website uses (lib/cocktails_member.tcl,
+/// through /cocktails/api/me), so the app and the site stay one: Liked and Made (drink ids from
+/// every book; Made with when it was last made), notes ({id: comment}), Your Bar and the "hide if you
+/// cannot make" preference. A copy is kept on the device so the lists show offline; each change is
+/// its own request (one drink, one note), so the app and the site can't undo each other's changes.
 @MainActor
 final class Member: ObservableObject {
 	static let shared = Member()
@@ -16,10 +17,8 @@ final class Member: ObservableObject {
 	@Published private(set) var bar = Bar.normalized(nil)
 	@Published private(set) var hideUnmakeable = false
 	@Published private(set) var loaded = false
-	/// the server's pdt_bar couldn't be read: never overwrite it (as the site's "I have this")
+	/// the server's bar couldn't be read: never overwrite it
 	private var barUnreadable = false
-	/// the same for pdt_made_on: skip the date writes rather than wipe the dates
-	private var madeOnUnreadable = false
 
 	private let cacheKey = "member.cache"
 	private var account: Account { Account.shared }
@@ -29,21 +28,16 @@ final class Member: ObservableObject {
 	// MARK: load / clear
 
 	func load() async {
-		guard account.signedIn else { return }
-		async let w = account.get("pdt_wish"), m = account.get("pdt_made"), on = account.get("pdt_made_on"),
-			n = account.get("pdt_notes"), b = account.get("pdt_bar"), h = account.get("pdt_hide_unmakeable")
-		let (rw, rm, ron, rn, rb, rh) = await (w, m, on, n, b, h)
-		if case .value(let s) = rw { wish = Self.ids(s) }
-		if case .value(let s) = rm { made = Self.ids(s) }
-		if case .value(let s) = ron {
-			if let o = Self.object(s) { madeOn = o.compactMapValues { ($0 as? Int) ?? ($0 as? Double).map { Int($0) } ?? ($0 as? String).flatMap { Int($0) } }; madeOnUnreadable = false }
-			else { madeOnUnreadable = true }
-		}
-		if case .value(let s) = rn, let o = Self.object(s) { notes = o.compactMapValues { $0 as? String } }
-		if case .value(let s) = rb {
-			if let parsed = Bar.decode(s) { bar = Bar.normalized(parsed); barUnreadable = false } else { barUnreadable = true }
-		}
-		if case .value(let s) = rh { hideUnmakeable = s == "1" }
+		guard account.signedIn, let me = await account.me() else { return }
+		let liked = me["liked"] as? [[String: Any]] ?? [], mades = me["made"] as? [[String: Any]] ?? []
+		wish = liked.compactMap { Self.int($0["id"]) }
+		made = mades.compactMap { Self.int($0["id"]) }
+		madeOn = Dictionary(uniqueKeysWithValues: mades.compactMap { m in Self.int(m["id"]).flatMap { id in Self.int(m["last_made_at"]).map { (String(id), $0) } } })
+		notes = (me["notes"] as? [String: Any] ?? [:]).compactMapValues { $0 as? String }
+		if let b = me["bar"] as? [String: Any] {
+			if let d = try? JSONSerialization.data(withJSONObject: b), case .some(let parsed) = Bar.decode(String(decoding: d, as: UTF8.self)) { bar = Bar.normalized(parsed); barUnreadable = false } else { barUnreadable = true }
+		} else { bar = Bar.normalized(nil); barUnreadable = false }
+		hideUnmakeable = (me["prefs"] as? [String: Any])?["hide_unmakeable"] as? Bool ?? false
 		loaded = true
 		save()
 	}
@@ -58,32 +52,29 @@ final class Member: ObservableObject {
 	func isMade(_ id: Int) -> Bool { made.contains(id) }
 
 	func toggleWish(_ id: Int) {
-		if let i = wish.firstIndex(of: id) { wish.remove(at: i) } else { wish.append(id) }
-		write("pdt_wish", Self.json(wish))
+		let adding = !wish.contains(id)
+		if adding { wish.append(id) } else { wish.removeAll { $0 == id } }
+		send(adding ? "PUT" : "DELETE", "liked/\(id)")
 	}
-	/// marking Made stamps today; un-marking removes the date
+	/// marking Made dates it today; un-marking takes it off
 	func toggleMade(_ id: Int) {
 		let adding = !made.contains(id)
-		if adding { made.append(id) } else { made.removeAll { $0 == id } }
-		write("pdt_made", Self.json(made))
-		stamp(id, adding)
+		if adding { made.append(id); madeOn[String(id)] = Self.now } else { made.removeAll { $0 == id }; madeOn.removeValue(forKey: String(id)) }
+		send(adding ? "PUT" : "DELETE", "made/\(id)", query: adding ? ["source": "app"] : [:])
 	}
-	/// the scale maker reaching the glass: made, and re-made today if it was already
+	/// the scale maker reaching the glass: made, and made again today if it was already
 	func addMade(_ id: Int) {
-		if !made.contains(id) { made.append(id); write("pdt_made", Self.json(made)) }
-		stamp(id, true)
-	}
-	private func stamp(_ id: Int, _ yes: Bool) {
-		guard !madeOnUnreadable else { return }
-		if yes { madeOn[String(id)] = Int(Date().timeIntervalSince1970) } else { madeOn.removeValue(forKey: String(id)) }
-		write("pdt_made_on", Self.json(madeOn))
+		if !made.contains(id) { made.append(id) }
+		madeOn[String(id)] = Self.now
+		send("PUT", "made/\(id)", query: ["source": "scale"])
 	}
 	func note(_ id: Int) -> String { notes[String(id)] ?? "" }
 	func setNote(_ id: Int, _ text: String) {
 		let v = text.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression).trimmingCharacters(in: .whitespaces)
 		guard v != note(id) else { return }
 		if v.isEmpty { notes.removeValue(forKey: String(id)) } else { notes[String(id)] = v }
-		write("pdt_notes", Self.json(notes))
+		// one note per request, so a note written on the site since isn't wiped
+		send(v.isEmpty ? "DELETE" : "PUT", "notes/\(id)", fields: v.isEmpty ? [:] : ["note": v])
 	}
 
 	// MARK: Your Bar (bar.js)
@@ -114,11 +105,11 @@ final class Member: ObservableObject {
 		var b = bar
 		f(&b)
 		bar = Bar.normalized(b)
-		write("pdt_bar", bar.json())
+		send("PUT", "bar", fields: ["bar": bar.json()])
 	}
 	func setHideUnmakeable(_ v: Bool) {
 		hideUnmakeable = v
-		write("pdt_hide_unmakeable", v ? "1" : "0")
+		send("PUT", "prefs", fields: ["hide_unmakeable": v ? "1" : "0"])
 	}
 
 	// MARK: can make (pdt_canmake_names), per book
@@ -136,10 +127,12 @@ final class Member: ObservableObject {
 
 	// MARK: plumbing
 
-	private func write(_ key: String, _ value: String) {
+	private func send(_ method: String, _ path: String, query: [String: String] = [:], fields: [String: String] = [:]) {
 		save()
-		Task { await account.set(key, value) }
+		Task { await account.api(method, path, query: query, fields: fields) }
 	}
+	private static var now: Int { Int(Date().timeIntervalSince1970) }
+	private static func int(_ v: Any?) -> Int? { (v as? Int) ?? (v as? Double).map { Int($0) } ?? (v as? String).flatMap { Int($0) } }
 	private struct Cache: Codable { var wish, made: [Int]; var madeOn: [String: Int]; var notes: [String: String]; var bar: Bar; var hide: Bool }
 	private func save() {
 		let c = Cache(wish: wish, made: made, madeOn: madeOn, notes: notes, bar: bar, hide: hideUnmakeable)
@@ -148,19 +141,5 @@ final class Member: ObservableObject {
 	private func restore() {
 		guard Account.shared.signedIn, let d = UserDefaults.standard.data(forKey: cacheKey), let c = try? JSONDecoder().decode(Cache.self, from: d) else { return }
 		wish = c.wish; made = c.made; madeOn = c.madeOn; notes = c.notes; bar = c.bar; hideUnmakeable = c.hide
-	}
-	/// the drink ids in a stored list (pdt_canmake_json reads them with a \d+ regexp; this is as lenient)
-	private static func ids(_ s: String) -> [Int] {
-		guard let d = s.data(using: .utf8), let a = try? JSONSerialization.jsonObject(with: d) as? [Any] else { return [] }
-		return a.compactMap { ($0 as? Int) ?? ($0 as? String).flatMap { Int($0) } }
-	}
-	private static func object(_ s: String) -> [String: Any]? {
-		if s.isEmpty { return [:] }
-		guard let d = s.data(using: .utf8) else { return nil }
-		return try? JSONSerialization.jsonObject(with: d) as? [String: Any]
-	}
-	private static func json(_ v: Any) -> String {
-		guard let d = try? JSONSerialization.data(withJSONObject: v, options: [.sortedKeys, .withoutEscapingSlashes]) else { return "" }
-		return String(decoding: d, as: UTF8.self)
 	}
 }
