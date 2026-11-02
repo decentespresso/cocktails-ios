@@ -70,11 +70,18 @@ struct BookChrome: ViewModifier {
 		content
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar {
-				// the brand goes back to choosing a book, as the site's does (brandhref /cocktails/)
+				// the brand goes back to choosing a book, as the site's does (brandhref /cocktails/);
+				// at the left of its space, signed in or out (centred, it moved when the account button
+				// was missing), and just the book's name when the full one doesn't fit
 				ToolbarItem(placement: .principal) {
 					Button { toRoot() } label: {
-						Text("\(book.short) Cocktails").font(Theme.sans(17, .bold)).kerning(-0.3).foregroundStyle(Theme.ink)
+						ViewThatFits(in: .horizontal) {
+							Text("\(book.short) Cocktails")
+							Text(book.short)
+						}
+						.font(Theme.sans(17, .bold)).kerning(-0.3).foregroundStyle(Theme.ink).lineLimit(1)
 					}.buttonStyle(.plain)
+					.frame(maxWidth: .infinity, alignment: .leading)
 				}
 				ToolbarItemGroup(placement: .topBarTrailing) {
 					NavigationLink(value: Route.search(book.key, q: "")) {

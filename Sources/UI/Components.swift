@@ -511,11 +511,17 @@ struct OtherBookPills: View {
 struct FlowLayout: Layout {
 	var spacing: CGFloat = 8
 	var lineSpacing: CGFloat = 8
+	/// a subview at its own size, or wrapped to the line when it's wider (a long breadcrumb name
+	/// would otherwise run past the edge, under whatever sits beside it)
+	private func size(_ s: LayoutSubview, _ w: CGFloat) -> CGSize {
+		let sz = s.sizeThatFits(.unspecified)
+		return sz.width > w && w.isFinite ? s.sizeThatFits(ProposedViewSize(width: w, height: nil)) : sz
+	}
 	func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
 		let w = proposal.width ?? .infinity
 		var x: CGFloat = 0, y: CGFloat = 0, rowH: CGFloat = 0, maxX: CGFloat = 0
 		for s in subviews {
-			let sz = s.sizeThatFits(.unspecified)
+			let sz = size(s, w)
 			if x > 0 && x + sz.width > w { y += rowH + lineSpacing; x = 0; rowH = 0 }
 			x += sz.width + spacing; rowH = max(rowH, sz.height); maxX = max(maxX, x - spacing)
 		}
@@ -524,7 +530,7 @@ struct FlowLayout: Layout {
 	func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
 		var x = bounds.minX, y = bounds.minY, rowH: CGFloat = 0
 		for s in subviews {
-			let sz = s.sizeThatFits(.unspecified)
+			let sz = size(s, bounds.width)
 			if x > bounds.minX && x + sz.width > bounds.maxX { y += rowH + lineSpacing; x = bounds.minX; rowH = 0 }
 			s.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(sz))
 			x += sz.width + spacing; rowH = max(rowH, sz.height)

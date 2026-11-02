@@ -295,15 +295,17 @@ struct RecipeView: View {
 					Text(row.label).font(Theme.sans(16, .semibold)).foregroundStyle(Theme.ink).multilineTextAlignment(.leading)
 						.fixedSize(horizontal: false, vertical: true)
 				}.buttonStyle(.plain)
-				HStack(alignment: .firstTextBaseline, spacing: 8) {
+				// the method word moves to the next line when a long category ("SPICES, HERBS &
+				// GARNISHES") leaves no room, rather than cutting the category off
+				FlowLayout(spacing: 8, lineSpacing: 3) {
 					if !row.cat.isEmpty {
 						NavigationLink(value: Route.cat(book.key, row.cat)) {
 							Text(Store.prettyCat(row.cat).uppercased()).font(Theme.mono(11.5, .semibold)).kerning(0.25).foregroundStyle(Theme.soft)
+								.multilineTextAlignment(.leading)
 						}.buttonStyle(.plain)
 					}
 					Text(row.mixLabel.uppercased()).font(Theme.mono(11.5)).kerning(0.45).foregroundStyle(Theme.faint)
 				}
-				.lineLimit(1).minimumScaleFactor(0.8)
 				if missing && !row.isGarnish { missingNote(row) }
 			} }
 			Spacer(minLength: 4)
@@ -447,7 +449,9 @@ struct CommentsRow: View {
 	@State private var text = ""
 	@FocusState private var focused: Bool
 	var body: some View {
-		HStack(alignment: .firstTextBaseline, spacing: 7) {
+		// top, not firstTextBaseline: an empty vertical TextField has no baseline, so the label
+		// and the cursor came apart while typing the first comment (same font, so tops line up)
+		HStack(alignment: .top, spacing: 7) {
 			if !text.isEmpty || focused { Text("\(T("Comments")):").font(Theme.mono(13, .semibold)).foregroundStyle(Theme.soft) }
 			TextField(T("Comments"), text: $text, axis: .vertical)
 				.font(Theme.mono(13)).foregroundStyle(Theme.ink)

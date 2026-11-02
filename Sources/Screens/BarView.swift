@@ -93,8 +93,10 @@ struct BarView: View {
 		let o = ix.owned(member.items)
 		let rows: [(String, String, Int)] = [("wish", T("Wishlist"), ownMarks.wish.count), ("made", T("Made"), ownMarks.made.count),
 			("make", T("You can make"), ix.makeable(o).count), ("ing", T("Ingredients"), member.items.count)]
+		// one line that scrolls sideways when the tabs don't fit (a phone, or a longer language),
+		// the chosen tab kept in view
 		return VStack(spacing: 0) {
-			FlowLayout(spacing: 4) {
+			ScrollViewReader { sv in ScrollView(.horizontal, showsIndicators: false) { HStack(spacing: 4) {
 				ForEach(rows, id: \.0) { k, label, n in
 					Button { tab = k } label: {
 						HStack(spacing: 6) {
@@ -104,9 +106,11 @@ struct BarView: View {
 						}
 						.padding(.horizontal, 14).padding(.vertical, 9)
 						.overlay(alignment: .bottom) { if tab == k { Rectangle().fill(Theme.acc).frame(height: 2) } }
-					}.buttonStyle(.plain)
+					}.buttonStyle(.plain).id(k)
 				}
-			}
+			} }
+			.onAppear { sv.scrollTo(tab) }
+			.onChange(of: tab) { _, t in withAnimation { sv.scrollTo(t) } } }
 			Rectangle().fill(Theme.line).frame(height: 1)
 		}
 	}

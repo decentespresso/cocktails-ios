@@ -244,13 +244,13 @@ struct GlassView: View {
 		let flat = book.store.drinksInGlass(name)
 		PageScroll {
 			Crumb(items: [(T("Home"), .home(book.key)), (T("Glasses"), .glasses(book.key)), (T(name), nil)]).padding(.top, 10)
-			// .ghead (row-reverse, the text not stretched): the glass at the right, its title beside it
+			// .ghead: the title lined up with the breadcrumb, the glass at the right
 			HStack(spacing: 18) {
-				Spacer(minLength: 0)
 				VStack(alignment: .leading, spacing: 10) {
 					H1(T("{glass} cocktails", ["glass": T(name)]))
 					Text(nCocktails(flat.count)).font(Theme.mono(13)).foregroundStyle(Theme.soft)
 				}
+				Spacer(minLength: 0)
 				if let u = Img.glass(name) { Pic(url: u, bg: nil).frame(width: 84, height: 84) }
 			}
 			.padding(.bottom, 28)
@@ -512,20 +512,25 @@ struct UsageView: View {
 		GeometryReader { geo in
 			let vw = geo.size.width
 			let w = min(vw, 1180) - 2 * Theme.gutter(vw)
-			// .utable: the full width; on a phone, where it can't fit, 760 wide and scrolled sideways
-			// (the site's display:block overflow-x:auto), the page scrolling both ways so the rows
-			// still load as they come into view
-			let tw = max(w, 760)
-			let table = LazyVStack(alignment: .leading, spacing: 0) {
-				head
-				UsageRow(data: nil, width: tw, book: book).padding(.top, 24)
-				ForEach(rows) { UsageRow(data: $0, width: tw, book: book) }
-			}
-			.frame(width: tw, alignment: .leading)
-			.padding(.horizontal, Theme.gutter(vw))
-			.padding(.bottom, 40)
-			ScrollView(w < 760 ? [.horizontal, .vertical] : .vertical) {
-				table.frame(maxWidth: .infinity)
+			// .utable: the full width; where it can't fit (a phone), one stacked row per ingredient
+			// instead, so nothing runs off the screen (the site scrolls its table sideways there,
+			// which cut off the title, the subtitle and the Used in column)
+			let stacked = w < 760
+			ScrollView {
+				LazyVStack(alignment: .leading, spacing: 0) {
+					head
+					if stacked {
+						Rectangle().fill(Theme.ink).frame(height: 2).padding(.top, 8)
+						ForEach(rows) { UsageStackedRow(data: $0, book: book) }
+					} else {
+						UsageRow(data: nil, width: w, book: book).padding(.top, 24)
+						ForEach(rows) { UsageRow(data: $0, width: w, book: book) }
+					}
+				}
+				.frame(width: w, alignment: .leading)
+				.padding(.horizontal, Theme.gutter(vw))
+				.padding(.bottom, 40)
+				.frame(maxWidth: .infinity)
 			}
 			.environment(\.vw, vw)
 			.background(Theme.paper)
@@ -572,8 +577,40 @@ struct UsageRow: View {
 		}
 		.overlay(alignment: .bottom) { Rectangle().fill(data == nil ? Theme.ink : Theme.line).frame(height: data == nil ? 2 : 1) }
 	}
+	private func links(_ d: UsageData) -> AttributedString { UsageData.links(d, book: book) }
+}
+
+/// one ingredient of the usage table on a phone: the name and its count, the category, then the
+/// cocktails it's used in
+struct UsageStackedRow: View {
+	let data: UsageData
+	let book: Book
+	var body: some View {
+		VStack(alignment: .leading, spacing: 6) {
+			HStack(alignment: .firstTextBaseline, spacing: 12) {
+				NavigationLink(value: Route.ingredient(book.key, name: data.name, with: "")) {
+					Text(T(data.name)).font(Theme.sans(16, .semibold)).foregroundStyle(Theme.ink).multilineTextAlignment(.leading)
+				}.buttonStyle(.plain)
+				Spacer(minLength: 0)
+				Text(nCocktails(data.count)).font(Theme.mono(12)).foregroundStyle(Theme.soft).lineLimit(1).fixedSize()
+			}
+			if data.tags != "-" {
+				Text(data.tags.uppercased()).font(Theme.mono(10.6)).kerning(0.6).foregroundStyle(Theme.faint)
+			}
+			if !data.cocktails.isEmpty {
+				Text(UsageData.links(data, book: book)).font(Theme.sans(14.7)).lineSpacing(3).foregroundStyle(Theme.ink).tint(Theme.ink)
+					.fixedSize(horizontal: false, vertical: true)
+			}
+		}
+		.padding(.vertical, 14)
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.overlay(alignment: .bottom) { Rectangle().fill(Theme.line).frame(height: 1) }
+	}
+}
+
+extension UsageData {
 	/// "Aviation, Bee's Knees, …", each a link to its recipe
-	private func links(_ d: UsageData) -> AttributedString {
+	static func links(_ d: UsageData, book: Book) -> AttributedString {
 		var out = AttributedString()
 		for (k, c) in d.cocktails.enumerated() {
 			if k > 0 { out += AttributedString(", ") }
