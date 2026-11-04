@@ -42,6 +42,18 @@ Or open `Cocktails.xcodeproj` in Xcode and run on an iPhone simulator or "My Mac
 
 These come from the website's source tree (`/d`), which is not public. That is why the data is not in this repository (see Licence).
 
+### Without the website's data
+
+To build and run the app without the website's tree, make sample data instead of running `scripts/sync_data.sh`:
+
+```bash
+python3 scripts/sample_data.py
+```
+
+It writes the two book databases and the JSON files in the same schema, with about 30 well-known classic drinks in everyday proportions. They are made up for the script, not the books' recipes or Decent's descriptions, and there are no pictures or translations. That is enough to work on the code, but not to compare a page with the website.
+
+`scripts/check_sql.py` runs every query in `Sources/` against whichever data is in `Resources/Data/`, so a change to a query or to the schema shows up without building the app. Run it after changing either.
+
 ## How it is put together
 
 ```
@@ -70,6 +82,8 @@ Sources/
 scripts/
   sync_data.sh           copy the dbs and pictures from the site's tree
   sync_lang.py           the site's translations of every phrase the app shows
+  sample_data.py         made-up sample data, for building without the site's tree
+  check_sql.py           run every query in Sources/ against the data
   shot.sh                screenshot any page of the Mac build: shot.sh /cocktails/pdt/recipes/Negroni out.png
 ```
 
