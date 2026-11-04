@@ -1,0 +1,29 @@
+# Builds the app as a contributor without the website's tree does: the sample data
+# (scripts/sample_data.py), every query in Sources/ run against it (scripts/check_sql.py), then
+# the Mac Catalyst and iOS Simulator builds. Nothing is signed.
+name: Build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: macos-26
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Mac Catalyst
+            destination: platform=macOS,variant=Mac Catalyst
+          - name: iOS Simulator
+            destination: generic/platform=iOS Simulator
+    steps:
+      - uses: actions/checkout@v5
+      - name: Sample data
+        run: python3 scripts/sample_data.py
+      - name: Check every query against the data
+        run: python3 scripts/check_sql.py
+      - name: Build
+        run: xcodebuild -scheme Cocktails -destination '${{ matrix.destination }}' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
