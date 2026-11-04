@@ -180,7 +180,7 @@ struct RecipeView: View {
 			}
 		}
 		.padding(.horizontal, 18).padding(.vertical, 4)
-		.background(Theme.picBG)
+		.picBG(r.image)
 	}
 
 	/// the cocktail picture once per drink: 2.5 drinks = 2 glasses and a faded third; 8 at most, then "+N"

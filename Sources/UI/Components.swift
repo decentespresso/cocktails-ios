@@ -8,7 +8,10 @@ final class PicCache {
 	static let shared = NSCache<NSURL, UIImage>()
 	static func image(_ url: URL) -> UIImage? {
 		if let i = shared.object(forKey: url as NSURL) { return i }
-		guard let i = UIImage(contentsOfFile: url.path) else { return nil }
+		// decoded here, once, rather than lazily on SwiftUI's image threads: many AVIFs decoding at
+		// once there deadlocked ImageIO (Your Bar's Ingredients tab hung on a blank screen)
+		guard let raw = UIImage(contentsOfFile: url.path) else { return nil }
+		let i = raw.preparingForDisplay() ?? raw
 		shared.setObject(i, forKey: url as NSURL)
 		return i
 	}
@@ -18,10 +21,13 @@ final class PicCache {
 struct Pic: View {
 	let url: URL?
 	var bg: Color? = Theme.picBG
+	@Environment(\.colorScheme) private var scheme
 	var body: some View {
+		// in dark mode, the cut-out where there is one, with no white behind it (as the site)
+		let dk = scheme == .dark ? Img.dark(url) : nil
 		ZStack {
-			if let bg { bg }
-			if let url, let img = PicCache.image(url) {
+			if let bg, dk == nil { bg }
+			if let url = dk ?? url, let img = PicCache.image(url) {
 				Image(uiImage: img).resizable().interpolation(.high).aspectRatio(contentMode: .fit)
 			}
 		}
@@ -305,7 +311,7 @@ struct DrinkCard: View {
 		// .card (phones: pdt_mobile.css's smaller picture, name and padding)
 		let phone = Theme.phone(vw)
 		VStack(alignment: .leading, spacing: 0) {
-			Pic(url: card.image).frame(height: phone ? 104 : 120).frame(maxWidth: .infinity).padding(.vertical, phone ? 4 : 6).background(Theme.picBG)
+			Pic(url: card.image).frame(height: phone ? 104 : 120).frame(maxWidth: .infinity).padding(.vertical, phone ? 4 : 6).picBG(card.image)
 				.overlay(alignment: .topTrailing) { MarkBadge(wish: member.isWish(card.id), made: member.isMade(card.id)) }
 				.padding(.bottom, 8)
 			(rankText + Text(card.name).font(Theme.sans(phone ? 16.5 : 19.5, .semibold)).foregroundColor(Theme.ink))
@@ -536,4 +542,19 @@ struct FlowLayout: Layout {
 			x += sz.width + spacing; rowH = max(rowH, sz.height)
 		}
 	}
+}
+
+/// the white behind pictures (.card .viz, .rviz...), which goes in dark mode when every picture in it
+/// has its cut-out (the site's :has(img.dkimg){background:transparent})
+struct PicBG: ViewModifier {
+	let urls: [URL?]
+	@Environment(\.colorScheme) private var scheme
+	func body(content: Content) -> some View {
+		let clear = scheme == .dark && !urls.isEmpty && urls.allSatisfy { Img.dark($0) != nil }
+		content.background(clear ? Color.clear : Theme.picBG)
+	}
+}
+extension View {
+	func picBG(_ urls: URL?...) -> some View { modifier(PicBG(urls: urls)) }
+	func picBG(_ urls: [URL?]) -> some View { modifier(PicBG(urls: urls)) }
 }

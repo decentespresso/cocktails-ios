@@ -163,6 +163,56 @@ final class Account: NSObject, ObservableObject, ASWebAuthenticationPresentation
 		return h.statusCode == 200
 	}
 
+	/// a site page's JSON with the token (Your Bar's sharers.json / shared.json); nil when it fails
+	func getJSON(_ path: String, query: [String: String] = [:]) async -> Any? {
+		guard let (data, code) = await fetch(path, query: query), code == 200 else { return nil }
+		return try? JSONSerialization.jsonObject(with: data)
+	}
+	/// raw bytes with the token (a pending bottle's photo, which only its member may see)
+	func fetch(_ path: String, query: [String: String] = [:]) async -> (Data, Int)? {
+		guard let token else { return nil }
+		var c = URLComponents(url: server.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
+		if !query.isEmpty { c.queryItems = query.map { .init(name: $0.key, value: $0.value) } }
+		var req = URLRequest(url: c.url!)
+		req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+		req.cachePolicy = .reloadIgnoringLocalCacheData
+		guard let (data, resp) = try? await URLSession.shared.data(for: req), let h = resp as? HTTPURLResponse else { return nil }
+		if h.statusCode == 401 { lapsed(); return nil }
+		return (data, h.statusCode)
+	}
+	/// one change whose reply matters (a share name the site may refuse): the status and the JSON
+	func apiReply(_ method: String, _ path: String, fields: [String: String] = [:]) async -> (Int, [String: Any]) {
+		guard let token else { return (401, [:]) }
+		var req = URLRequest(url: server.appendingPathComponent("cocktails/api/me/" + path))
+		req.httpMethod = method
+		req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+		req.setValue("application/x-www-form-urlencoded; charset=utf-8", forHTTPHeaderField: "Content-Type")
+		req.httpBody = Self.form(fields)
+		guard let (data, resp) = try? await URLSession.shared.data(for: req), let h = resp as? HTTPURLResponse else { return (0, [:]) }
+		if h.statusCode == 401 { lapsed() }
+		return (h.statusCode, (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:])
+	}
+	/// a photo of a bottle (POST /cocktails/api/me/bottles, lib/cocktails_bottles.tcl): the site asks
+	/// DeepSeek what it is and adds it to Your Bar. The reply: ok, id, name, how (catalog|pending|new),
+	/// or error (and not_bottle). Takes a while: the site waits for the answer.
+	func uploadBottle(_ jpeg: Data) async -> (Int, [String: Any]) {
+		guard let token else { return (401, [:]) }
+		let boundary = "dc" + Self.randomString(24).replacingOccurrences(of: "~", with: "x")
+		var req = URLRequest(url: server.appendingPathComponent("cocktails/api/me/bottles"))
+		req.httpMethod = "POST"
+		req.timeoutInterval = 120
+		req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+		req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+		var body = Data()
+		body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"photo\"; filename=\"bottle.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n".utf8))
+		body.append(jpeg)
+		body.append(Data("\r\n--\(boundary)--\r\n".utf8))
+		req.httpBody = body
+		guard let (data, resp) = try? await URLSession.shared.data(for: req), let h = resp as? HTTPURLResponse else { return (0, [:]) }
+		if h.statusCode == 401 { lapsed() }
+		return (h.statusCode, (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:])
+	}
+
 	/// the token stopped working (revoked, or the account closed): back to signed out
 	private func lapsed() {
 		Keychain.delete(keychainKey)

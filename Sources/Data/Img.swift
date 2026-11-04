@@ -35,6 +35,20 @@ enum Img {
 		ingredients[name].flatMap { rel in local("img/" + (rel as NSString).deletingLastPathComponent + "/tc/" + (rel as NSString).lastPathComponent + ".jpg") }
 	}
 	static func glass(_ name: String) -> URL? { avif(glasses[name]) }
+	/// dark mode (the site's cocktails/js/dark_img.js): a drink, ingredient or spirit picture's cut-out,
+	/// <dir>/dark/[t/]<name>.avif, white background and shadow removed; nil where there's none.
+	/// t/ and tc/ (small, trimmed) use dark/t/, the rest dark/
+	static func dark(_ u: URL?) -> URL? {
+		guard let u, u.isFileURL else { return nil }
+		let p = u.path, root = dataDir.appendingPathComponent("img").path + "/"
+		guard p.hasPrefix(root) else { return nil }
+		var parts = String(p.dropFirst(root.count)).split(separator: "/").map(String.init)
+		guard parts.count >= 2, ["pdt", "deathco", "ingredients", "spirits"].contains(parts[0]), !parts.contains("dark") else { return nil }
+		let file = parts.removeLast(), name = (file as NSString).deletingPathExtension
+		let sub = parts.count > 1 ? parts[1] : ""
+		guard parts.count <= 2, sub.isEmpty || ["t", "tc", "tz", "tr", "vc"].contains(sub) else { return nil }
+		return local("img/\(parts[0])/dark/" + (sub == "t" || sub == "tc" ? "t/" : "") + name + ".avif")
+	}
 	static func spiritPair(_ a: String, _ b: String) -> URL? { local("img/spirits/pair/\(a)-\(b).avif") }
 
 	// the full-size pictures (1024px PNG) aren't bundled: "See it larger" fetches them from the

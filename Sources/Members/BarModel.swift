@@ -149,13 +149,14 @@ final class BarIndex {
 			}
 		}
 		var seen = Set<Int>()
-		for r in db.rows("SELECT DISTINCT i.ingredient_id, i.name, (SELECT t.name FROM ingtag t WHERE t.ingredient_id=i.ingredient_id LIMIT 1) FROM step s JOIN ingredient i ON i.ingredient_id=s.ingredient_id WHERE s.ingredient_id IS NOT NULL ORDER BY i.name") {
+		// every ingredient, including bottles no recipe uses (ones added for Your Bar alone, as on the site)
+		for r in db.rows("SELECT i.ingredient_id, i.name, (SELECT t.name FROM ingtag t WHERE t.ingredient_id=i.ingredient_id LIMIT 1) FROM ingredient i WHERE i.name IS NOT NULL ORDER BY i.name") {
 			ings.append(Ing(id: r.i(0), name: r.s(1), kind: kind[r.i(0)] ?? "", cat: r.s(2), book: book.key))
 			seen.insert(r.i(0))
 		}
 		// the other books' ingredients too: one bar for every book
 		for ob in Book.all where ob != book {
-			for r in ob.store.db.rows("SELECT DISTINCT i.ingredient_id, i.name, i.generic, (SELECT t.name FROM ingtag t WHERE t.ingredient_id=i.ingredient_id LIMIT 1) FROM step s JOIN ingredient i ON i.ingredient_id=s.ingredient_id ORDER BY i.name") where !seen.contains(r.i(0)) {
+			for r in ob.store.db.rows("SELECT i.ingredient_id, i.name, i.generic, (SELECT t.name FROM ingtag t WHERE t.ingredient_id=i.ingredient_id LIMIT 1) FROM ingredient i WHERE i.name IS NOT NULL ORDER BY i.name") where !seen.contains(r.i(0)) {
 				seen.insert(r.i(0))
 				let g = r.s(2)
 				ings.append(Ing(id: r.i(0), name: r.s(1), kind: kind[r.i(0)] ?? (g.isEmpty ? Self.homemadeKind(r.s(1)) : g), cat: r.s(3), book: ob.key))
@@ -196,6 +197,7 @@ final class BarIndex {
 			if it.t == "i", let id = it.id {
 				o.ex.insert(id)
 				if let g = ingById[id], !g.kind.isEmpty, !g.kind.hasPrefix("p_") { o.gen.insert(g.kind) }
+				else if let p = PendingBottles.get(id), !p.kind.isEmpty { o.gen.insert(p.kind) }
 			} else if let b = it.b { o.gen.insert(b) }
 		}
 		return o
@@ -220,13 +222,13 @@ final class BarIndex {
 	func keyLabel(_ k: String) -> String {
 		let v = String(k.dropFirst(2))
 		if k.hasPrefix("b") { return kindByKey[v]?.label ?? v }
-		return Int(v).flatMap { ingById[$0] }.map { T($0.name) } ?? "#\(v)"
+		return Int(v).flatMap { ingById[$0] }.map { T($0.name) } ?? Int(v).flatMap { PendingBottles.get($0) }?.name ?? "#\(v)"
 	}
 	func keyItem(_ k: String) -> Bar.Item { let v = String(k.dropFirst(2)); return k.hasPrefix("b") ? .kind(v) : .ing(Int(v) ?? 0) }
 	/// a picture for an item: the ingredient's own, or for a kind the most-used bottle of it that has one
 	func keyImage(_ k: String) -> URL? {
 		let v = String(k.dropFirst(2))
-		if k.hasPrefix("i") { return Int(v).flatMap { ingById[$0] }.flatMap { Img.ingredient($0.name) } }
+		if k.hasPrefix("i") { return Int(v).flatMap { ingById[$0] }.flatMap { Img.ingredient($0.name) } ?? Int(v).flatMap { PendingBottles.get($0) }?.file }
 		return kindImage(v)
 	}
 	private var kindImg: [String: URL?] = [:]
@@ -243,7 +245,8 @@ final class BarIndex {
 	func typeOf(_ k: String) -> String {
 		let v = String(k.dropFirst(2))
 		let ing = k.hasPrefix("i") ? Int(v).flatMap { ingById[$0] } : ings.first { $0.kind == v }
-		if let ing { for t in Self.types where t.cats.contains(ing.cat) { return t.k } }
+		let cat = ing?.cat ?? (k.hasPrefix("i") ? Int(v).flatMap { PendingBottles.get($0) }?.cat : nil)
+		if let cat { for t in Self.types where t.cats.contains(cat) { return t.k } }
 		return "_other"
 	}
 	func isBottle(_ k: String) -> Bool { ["spirits", "liqueur", "vermouth", "wine", "bitters"].contains(typeOf(k)) }
@@ -318,21 +321,43 @@ final class BarIndex {
 	static let baseAlias = ["whisky": "whiskey", "bourbon": "whiskey", "rye": "whiskey", "scotch": "whiskey", "rhum": "rum", "cachaca": "rum", "cachaça": "rum",
 		"cognac": "brandy", "armagnac": "brandy", "calvados": "brandy", "applejack": "brandy", "mescal": "mezcal", "old tom": "gin", "genepi": "absinthe"]
 	func search(_ raw: String) -> [Bar.Item] {
-		let q = raw.trimmingCharacters(in: .whitespaces).lowercased()
+		// accents don't matter ("creme" finds Crème de Myrtille), as bar.js
+		let q = Self.fold(raw.trimmingCharacters(in: .whitespaces))
 		guard !q.isEmpty else { return [] }
 		var alias = Set<String>()
 		for (a, k) in Self.baseAlias where a.hasPrefix(q) || q.hasPrefix(a) { alias.insert(k) }
 		var out: [Bar.Item] = kinds.filter { $0.k.contains(q) || $0.label.lowercased().contains(q) || alias.contains($0.k) }.map { .kind($0.k) }
 		func has(_ n: String) -> Bool {
-			let n = n.lowercased()
+			let n = Self.fold(n)
 			return n.contains(q) || n.contains(q.replacingOccurrences(of: "whisky", with: "whiskey")) || n.contains(q.replacingOccurrences(of: "whiskey", with: "whisky"))
 		}
 		for g in ings where out.count < 40 && (has(g.name) || has(T(g.name))) { out.append(.ing(g.id)) }
+		for p in PendingBottles.all() where out.count < 40 && has(p.name) && ingById[p.id] == nil { out.append(.ing(p.id)) }
 		return out
 	}
+	static func fold(_ s: String) -> String { s.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil) }
+
+	// MARK: stand-ins (admin/ingredient_substitutes.json)
+
+	/// "With a stand-in": cocktails you can't make as written where a bottle you own stands in for
+	/// each thing missing; each with its swaps (have, want), fewest swaps first, then popularity
+	func standins(_ o: Owned) -> [(rec: Rec, swaps: [(have: Int, want: Int)])] {
+		var out: [(rec: Rec, swaps: [(have: Int, want: Int)])] = []
+		for r in recipes where !canMake(r, o) {
+			var swaps: [(have: Int, want: Int)] = [], ok = true, seen = Set<Int>()
+			for q in r.req where !(o.ex.contains(q.id) || (!q.kind.isEmpty && o.gen.contains(q.kind))) && !seen.contains(q.id) {
+				seen.insert(q.id)
+				if let have = Substitutes.ids(for: q.id).first(where: { o.ex.contains($0) }) { swaps.append((have, q.id)) } else { ok = false; break }
+			}
+			if ok && !swaps.isEmpty { out.append((r, swaps)) }
+		}
+		return out.sorted { a, b in a.swaps.count != b.swaps.count ? a.swaps.count < b.swaps.count : Self.byPop(a.rec, b.rec) }
+	}
+	func recById(_ id: Int) -> Rec? { recipes.first { $0.id == id } }
+	func name(_ id: Int) -> String { ingById[id].map { T($0.name) } ?? PendingBottles.get(id)?.name ?? "#\(id)" }
 	func itemLabel(_ it: Bar.Item) -> String {
 		switch it.t {
-		case "i": return it.id.flatMap { ingById[$0] }.map { T($0.name) } ?? "#\(it.id ?? 0)"
+		case "i": return it.id.flatMap { ingById[$0] }.map { T($0.name) } ?? it.id.flatMap { PendingBottles.get($0) }?.name ?? "#\(it.id ?? 0)"
 		case "b": return kindByKey[it.b ?? ""]?.label ?? (it.b ?? "")
 		default: return it.d ?? "(custom)"
 		}
@@ -351,6 +376,20 @@ enum Substitutes {
 			return (subs, v["none"] as? String ?? "")
 		}
 	}()
+	/// the ids that can stand in for an ingredient
+	static func ids(for iid: Int) -> [Int] { all[String(iid)]?.subs.compactMap(\.id) ?? [] }
+	/// the other way round: what an ingredient can stand in for, {target id, its name, the tip}
+	private static let reverse: [Int: [(id: Int, name: String, tip: String)]] = {
+		var r: [Int: [(id: Int, name: String, tip: String)]] = [:]
+		for (k, v) in all { guard let tid = Int(k), let o = rawNames[k] else { continue }; for s in v.subs { if let sid = s.id { r[sid, default: []].append((tid, o, s.tip)) } } }
+		return r
+	}()
+	private static let rawNames: [String: String] = {
+		guard let d = try? Data(contentsOf: Img.dataDir.appendingPathComponent("ingredient_substitutes.json")),
+			  let o = try? JSONSerialization.jsonObject(with: d) as? [String: [String: Any]] else { return [:] }
+		return o.compactMapValues { $0["name"] as? String }
+	}()
+	static func standsIn(for iid: Int) -> [(id: Int, name: String, tip: String)] { reverse[iid] ?? [] }
 	/// pdt_missing_note: up to two, the ones already in the bar first (marked have = true)
 	static func note(_ iid: Int, book: Book, items: [Bar.Item]) -> (subs: [(Sub, have: Bool)], none: String)? {
 		guard let e = all[String(iid)] else { return nil }
@@ -362,4 +401,15 @@ enum Substitutes {
 		}
 		return (Array((marked.filter(\.have) + marked.filter { !$0.have }).prefix(2)), e.subs.isEmpty ? e.none : "")
 	}
+}
+
+/// bottles the member photographed that wait for an admin (GET /cocktails/api/me "bottles"), with
+/// their photo saved on the device; Member fills this, the bar index reads it for names and pictures
+enum PendingBottles {
+	struct P { let id: Int; let name: String; let cat: String; let kind: String; let file: URL? }
+	private static var byId: [Int: P] = [:]
+	private static let lock = NSLock()
+	static func set(_ ps: [P]) { lock.lock(); byId = Dictionary(ps.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a }); lock.unlock() }
+	static func get(_ id: Int) -> P? { lock.lock(); defer { lock.unlock() }; return byId[id] }
+	static func all() -> [P] { lock.lock(); defer { lock.unlock() }; return Array(byId.values).sorted { $0.name < $1.name } }
 }

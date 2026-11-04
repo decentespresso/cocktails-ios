@@ -17,6 +17,17 @@ final class Member: ObservableObject {
 	@Published private(set) var bar = Bar.normalized(nil)
 	@Published private(set) var hideUnmakeable = false
 	@Published private(set) var loaded = false
+	/// sharing (Your Bar > Settings): the member's id (their shareable pages' address), the name
+	/// they're listed under, what they share (nil until they've opened Settings once), and the
+	/// people whose bars they've added to the location menu
+	@Published private(set) var userid = 0
+	@Published private(set) var shareName = ""
+	@Published private(set) var share: Share?
+	@Published private(set) var following: [Person] = []
+	/// bumped when the pending bottles (PendingBottles) change, so views redraw
+	@Published private(set) var pendingVersion = 0
+	struct Share: Codable, Equatable { var made: Bool; var liked: Bool }
+	struct Person: Codable, Hashable, Identifiable { let u: Int; let name: String; var id: Int { u } }
 	/// the server's bar couldn't be read: never overwrite it
 	private var barUnreadable = false
 
@@ -37,12 +48,36 @@ final class Member: ObservableObject {
 		if let b = me["bar"] as? [String: Any] {
 			if let d = try? JSONSerialization.data(withJSONObject: b), case .some(let parsed) = Bar.decode(String(decoding: d, as: UTF8.self)) { bar = Bar.normalized(parsed); barUnreadable = false } else { barUnreadable = true }
 		} else { bar = Bar.normalized(nil); barUnreadable = false }
-		hideUnmakeable = (me["prefs"] as? [String: Any])?["hide_unmakeable"] as? Bool ?? false
+		let prefs = me["prefs"] as? [String: Any] ?? [:]
+		hideUnmakeable = prefs["hide_unmakeable"] as? Bool ?? false
+		userid = Self.int(me["userid"]) ?? 0
+		shareName = me["name"] as? String ?? ""
+		share = (prefs["share"] as? [String: Any]).map { Share(made: $0["made"] as? Bool ?? false, liked: $0["liked"] as? Bool ?? false) }
+		following = (me["following"] as? [[String: Any]] ?? []).compactMap { f in Self.int(f["u"]).map { Person(u: $0, name: f["name"] as? String ?? "") } }
 		loaded = true
 		save()
+		await loadPending(me["bottles"] as? [[String: Any]] ?? [])
+	}
+	/// the pending bottles, each photo fetched once (with the token) into the caches folder
+	private func loadPending(_ rows: [[String: Any]]) async {
+		let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("pending-bottles")
+		try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+		var ps: [PendingBottles.P] = []
+		for r in rows {
+			guard let id = Self.int(r["id"]) else { continue }
+			let photo = r["photo"] as? String ?? ""
+			let f = dir.appendingPathComponent("\(id).jpg")
+			if !FileManager.default.fileExists(atPath: f.path), !photo.isEmpty,
+			   let (d, code) = await account.fetch(String(photo.dropFirst())), code == 200 { try? d.write(to: f) }
+			ps.append(.init(id: id, name: r["name"] as? String ?? "", cat: r["category"] as? String ?? "", kind: r["kind"] as? String ?? "",
+				file: FileManager.default.fileExists(atPath: f.path) ? f : nil))
+		}
+		PendingBottles.set(ps)
+		pendingVersion += 1
 	}
 	func clear() {
 		wish = []; made = []; madeOn = [:]; notes = [:]; bar = Bar.normalized(nil); hideUnmakeable = false; loaded = false
+		userid = 0; shareName = ""; share = nil; following = []; PendingBottles.set([]); pendingVersion += 1
 		UserDefaults.standard.removeObject(forKey: cacheKey)
 	}
 
@@ -112,6 +147,67 @@ final class Member: ObservableObject {
 		send("PUT", "prefs", fields: ["hide_unmakeable": v ? "1" : "0"])
 	}
 
+	// MARK: sharing (Your Bar > Settings, other people's bars)
+
+	/// the first visit to Settings saves the prechecked choice (bar.js renderSettings)
+	func openedSettings() { if share == nil && loaded { setShare(Share(made: true, liked: true)) } }
+	func setShare(_ s: Share) {
+		share = s
+		send("PUT", "prefs", fields: ["share_made": s.made ? "1" : "0", "share_liked": s.liked ? "1" : "0"])
+	}
+	/// the name others see; "" goes back to the account's name. Returns the site's error, if any
+	func setShareName(_ name: String) async -> String? {
+		let (code, j) = await account.apiReply("PUT", "prefs", fields: ["share_name": name.trimmingCharacters(in: .whitespaces)])
+		if code != 200 { return j["error"] as? String ?? T("Something went wrong. Please try again.") }
+		await load()
+		return nil
+	}
+	/// the shareable Made / Liked page: /cocktails/<book>/made|liked/<userid>
+	func shareURL(_ kind: String, _ book: Book) -> URL? {
+		userid > 0 ? account.server.appendingPathComponent("cocktails/\(book.key)/\(kind)/\(userid)") : nil
+	}
+	struct Sharer: Identifiable { let u: Int; let name: String; let made: Int; let wish: Int; var id: Int { u } }
+	/// members who share something (but you): /cocktails/<book>/bar/sharers.json
+	func sharers(_ book: Book) async -> [Sharer]? {
+		guard let j = await account.getJSON("cocktails/\(book.key)/bar/sharers.json") as? [String: Any] else { return nil }
+		return (j["people"] as? [[String: Any]] ?? []).compactMap { p in
+			Self.int(p["u"]).map { Sharer(u: $0, name: p["name"] as? String ?? "", made: Self.int(p["made"]) ?? 0, wish: Self.int(p["wish"]) ?? 0) }
+		}
+	}
+	struct Shared { let name: String; let made: [Int]?; let wish: [Int]?; let madeOn: [String: Int]; let gone: Bool }
+	/// what one of them shares (shared.json): nil fields aren't shared; gone = they stopped sharing
+	func shared(_ u: Int, _ book: Book) async -> Shared? {
+		guard let (d, code) = await account.fetch("cocktails/\(book.key)/bar/shared.json", query: ["u": String(u)]) else { return nil }
+		if code == 404 { return Shared(name: following.first { $0.u == u }?.name ?? "", made: nil, wish: nil, madeOn: [:], gone: true) }
+		guard code == 200, let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return nil }
+		return Shared(name: j["name"] as? String ?? "", made: (j["made"] as? [Any])?.compactMap { Self.int($0) }, wish: (j["wish"] as? [Any])?.compactMap { Self.int($0) },
+			madeOn: (j["made_on"] as? [String: Any] ?? [:]).compactMapValues { Self.int($0) }, gone: false)
+	}
+	func follow(_ p: Person) {
+		if !following.contains(where: { $0.u == p.u }) { following.append(p) }
+		send("PUT", "following/\(p.u)")
+	}
+	func unfollow(_ u: Int) {
+		following.removeAll { $0.u == u }
+		send("DELETE", "following/\(u)")
+	}
+
+	// MARK: a photographed bottle
+
+	/// upload it; the site identifies it and adds it to the current bar. Returns what to tell the
+	/// member: (added, message)
+	func addBottle(photo jpeg: Data) async -> (ok: Bool, message: String) {
+		let (code, j) = await account.uploadBottle(jpeg)
+		if code == 200, j["ok"] as? Bool == true {
+			let name = j["name"] as? String ?? ""
+			await load()
+			var m = T("Added {name} to Your Bar.", ["name": name])
+			if j["how"] as? String == "new" { m += "\n" + T("It's new to us: it shows with your photo until we've made its picture.") }
+			return (true, m)
+		}
+		return (false, j["error"] as? String ?? T("Something went wrong. Please try again."))
+	}
+
 	// MARK: can make (pdt_canmake_names), per book
 
 	/// the names of a book's cocktails the bar can make, and what each other one is missing
@@ -133,13 +229,15 @@ final class Member: ObservableObject {
 	}
 	private static var now: Int { Int(Date().timeIntervalSince1970) }
 	private static func int(_ v: Any?) -> Int? { (v as? Int) ?? (v as? Double).map { Int($0) } ?? (v as? String).flatMap { Int($0) } }
-	private struct Cache: Codable { var wish, made: [Int]; var madeOn: [String: Int]; var notes: [String: String]; var bar: Bar; var hide: Bool }
+	private struct Cache: Codable { var wish, made: [Int]; var madeOn: [String: Int]; var notes: [String: String]; var bar: Bar; var hide: Bool
+		var userid: Int?; var shareName: String?; var share: Share?; var following: [Person]? }
 	private func save() {
-		let c = Cache(wish: wish, made: made, madeOn: madeOn, notes: notes, bar: bar, hide: hideUnmakeable)
+		let c = Cache(wish: wish, made: made, madeOn: madeOn, notes: notes, bar: bar, hide: hideUnmakeable, userid: userid, shareName: shareName, share: share, following: following)
 		if let d = try? JSONEncoder().encode(c) { UserDefaults.standard.set(d, forKey: cacheKey) }
 	}
 	private func restore() {
 		guard Account.shared.signedIn, let d = UserDefaults.standard.data(forKey: cacheKey), let c = try? JSONDecoder().decode(Cache.self, from: d) else { return }
 		wish = c.wish; made = c.made; madeOn = c.madeOn; notes = c.notes; bar = c.bar; hideUnmakeable = c.hide
+		userid = c.userid ?? 0; shareName = c.shareName ?? ""; share = c.share; following = c.following ?? []
 	}
 }

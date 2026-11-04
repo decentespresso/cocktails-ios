@@ -124,7 +124,7 @@ struct BookCard: View {
 			}
 			.padding(EdgeInsets(top: 18, leading: 18, bottom: 14, trailing: 18))
 			.frame(maxWidth: .infinity, minHeight: 190)
-			.background(Theme.picBG)
+			.picBG(shown.map { book.store.cocktailImg($0.name) })
 			Rectangle().fill(Theme.line).frame(height: 1)
 			NavigationLink(value: Route.home(book.key)) {
 				VStack(alignment: .leading, spacing: 6) {

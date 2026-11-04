@@ -23,6 +23,14 @@ cp ingredients/tc/*.jpg "$OUT/img/ingredients/tc/"
 # the cocktail photos trimmed on all sides (<book>/tz/): the recipe page's photo on phones,
 # beside the title, as the site's pdt_mobile.css shows it
 for b in pdt deathco; do mkdir -p "$OUT/img/$b/tz"; cp $b/tz/*.jpg "$OUT/img/$b/tz/"; done
+# dark mode's cut-outs (the site's <dir>/dark/[t/]<name>.avif, cocktails/js/dark_img.js), where made
+for dir in pdt deathco ingredients spirits; do
+	if [ -d "$dir/dark" ]; then
+		mkdir -p "$OUT/img/$dir/dark/t"
+		cp $dir/dark/*.avif "$OUT/img/$dir/dark/" 2>/dev/null || true
+		cp $dir/dark/t/*.avif "$OUT/img/$dir/dark/t/" 2>/dev/null || true
+	fi
+done
 # the book chooser's tour video thumbnail
 mkdir -p "$OUT/img/video"
 cp video/explainer.jpg "$OUT/img/video/"

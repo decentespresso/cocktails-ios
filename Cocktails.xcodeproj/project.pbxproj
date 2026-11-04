@@ -33,6 +33,7 @@
 		B163954EC38380E6AFE29CF2 /* Member.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D0206E080ABF220D8EFF268 /* Member.swift */; };
 		B2FBCA884DF6B25BE2971E3F /* CocktailsApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE9E6015F0863819BA061266 /* CocktailsApp.swift */; };
 		D3F6FA068D21373DBC8334AE /* Account.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7A22171A8CFE4F0E7242445 /* Account.swift */; };
+		D3FBB8125271A5CF0C3A579F /* BarSharing.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBCD40C05CB167FA5E149E0C /* BarSharing.swift */; };
 		D7CF26576A2D6C06B5E477C8 /* IBMPlexMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = BB23F6CF893285EA0ED110DC /* IBMPlexMono-Regular.ttf */; };
 		E7F18B703E7A6B52E7C6571B /* Data in Resources */ = {isa = PBXBuildFile; fileRef = 6E3A792309667FB9A733E7FA /* Data */; };
 		EA347105AA2C66890CF7B689 /* OFL-IBMPlexMono.txt in Resources */ = {isa = PBXBuildFile; fileRef = 2C5AED118B5CF7972E4E43BB /* OFL-IBMPlexMono.txt */; };
@@ -68,6 +69,7 @@
 		B4D61A8320C85BE46F091266 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		BB23F6CF893285EA0ED110DC /* IBMPlexMono-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "IBMPlexMono-Regular.ttf"; sourceTree = "<group>"; };
 		C7125C45F7084F6579B85FAE /* Store.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Store.swift; sourceTree = "<group>"; };
+		CBCD40C05CB167FA5E149E0C /* BarSharing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BarSharing.swift; sourceTree = "<group>"; };
 		CE9E6015F0863819BA061266 /* CocktailsApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CocktailsApp.swift; sourceTree = "<group>"; };
 		D62EF34473104834C1D5CF1B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		E5EC066807774C00EBEC5F06 /* IBMPlexMono-SemiBold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "IBMPlexMono-SemiBold.ttf"; sourceTree = "<group>"; };
@@ -187,6 +189,7 @@
 		C5A902A6A735D4A3B2239D6F /* Screens */ = {
 			isa = PBXGroup;
 			children = (
+				CBCD40C05CB167FA5E149E0C /* BarSharing.swift */,
 				018C62D7EF07994B857479FE /* BarView.swift */,
 				5D701E244036D9CF6A65D8DA /* HomeScreens.swift */,
 				0AA41E44FED199E78BDD96F7 /* ListScreens.swift */,
@@ -292,6 +295,7 @@
 				D3F6FA068D21373DBC8334AE /* Account.swift in Sources */,
 				5C6FD0905AE7EB58113FD2CF /* BarDump.swift in Sources */,
 				A9C0F33A36284CB13709D4DF /* BarModel.swift in Sources */,
+				D3FBB8125271A5CF0C3A579F /* BarSharing.swift in Sources */,
 				43F77F6125CF8697197788DD /* BarView.swift in Sources */,
 				82524B41012D383323C82972 /* Books.swift in Sources */,
 				B2FBCA884DF6B25BE2971E3F /* CocktailsApp.swift in Sources */,
@@ -353,7 +357,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = "";
 				ENABLE_NS_ASSERTIONS = NO;
@@ -367,7 +371,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 0.1.1;
+				MARKETING_VERSION = 0.2.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -437,7 +441,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -457,7 +461,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 0.1.1;
+				MARKETING_VERSION = 0.2.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;

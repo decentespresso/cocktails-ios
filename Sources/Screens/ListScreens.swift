@@ -362,14 +362,82 @@ struct IngredientView: View {
 					.padding(.top, 10) }
 				}
 			}
-			Block(top: 38) {
-				let title = with.isEmpty
-					? (n == 1 ? T("1 cocktail with {ingredient}", ["ingredient": ingt]) : T("{n} cocktails with {ingredient}", ["n": n, "ingredient": ingt]))
-					: (n == 1 ? T("1 cocktail with {ingredient} and {other}", ["ingredient": ingt, "other": T(with)]) : T("{n} cocktails with {ingredient} and {other}", ["n": n, "ingredient": ingt, "other": T(with)]))
-				SectionHead(title: title) { OtherBookPills(others: others) }
-				CardGrid(book: book, drinks: flat)
-			}.padding(.top, 24)
+			let stands = with.isEmpty ? standIns(s) : []
+			// a bottle no recipe uses shows what it stands in for instead of "0 cocktails with"
+			if n > 0 || stands.isEmpty {
+				Block(top: 38) {
+					let title = with.isEmpty
+						? (n == 1 ? T("1 cocktail with {ingredient}", ["ingredient": ingt]) : T("{n} cocktails with {ingredient}", ["n": n, "ingredient": ingt]))
+						: (n == 1 ? T("1 cocktail with {ingredient} and {other}", ["ingredient": ingt, "other": T(with)]) : T("{n} cocktails with {ingredient} and {other}", ["n": n, "ingredient": ingt, "other": T(with)]))
+					SectionHead(title: title) { OtherBookPills(others: others) }
+					CardGrid(book: book, drinks: flat)
+				}.padding(.top, 24)
+			}
+			if !stands.isEmpty { standInBlock(stands, ingt) }
 		}
+	}
+}
+
+extension IngredientView {
+	struct StandIn { let target: String; let tip: String; let book: Book; let drinks: [DrinkRef] }
+	/// what this ingredient can stand in for (admin/ingredient_substitutes.json read the other way
+	/// round, pdt_standin_section): in this book first, then ones only the other book uses
+	fileprivate func standIns(_ s: Store) -> [StandIn] {
+		guard let iid = s.ingredientId(name) ?? Book.all.lazy.compactMap({ $0.store.ingredientId(name) }).first else { return [] }
+		var here: [StandIn] = [], there: [StandIn] = []
+		for t in Substitutes.standsIn(for: iid) {
+			let d = s.drinksWith(t.name)
+			if !d.isEmpty { here.append(StandIn(target: t.name, tip: t.tip, book: book, drinks: d)); continue }
+			if let ob = Book.all.first(where: { $0 != book && !$0.store.drinksWith(t.name).isEmpty }) {
+				there.append(StandIn(target: t.name, tip: t.tip, book: ob, drinks: ob.store.drinksWith(t.name)))
+			}
+		}
+		return here.sorted { $0.drinks.count > $1.drinks.count } + there
+	}
+	/// "{ingredient} can be used instead of": each with its tip and its cocktails; the ones your bar
+	/// can make with this bottle standing in come first
+	@ViewBuilder fileprivate func standInBlock(_ stands: [StandIn], _ ingt: String) -> some View {
+		let member = Member.shared
+		let iid = book.store.ingredientId(name) ?? Book.all.lazy.compactMap({ $0.store.ingredientId(name) }).first ?? 0
+		let owns = member.has(.ing(iid))
+		Block(top: 38) {
+			SectionHead(title: T("{ingredient} can be used instead of", ["ingredient": ingt])) { EmptyView() }
+			ForEach(Array(stands.enumerated()), id: \.offset) { _, st in
+				VStack(alignment: .leading, spacing: 8) {
+					HStack(alignment: .firstTextBaseline, spacing: 10) {
+						NavigationLink(value: Route.ingredient(st.book.key, name: st.target, with: "")) {
+							Text(T(st.target)).font(Theme.sans(18, .semibold)).foregroundStyle(Theme.ink)
+						}.buttonStyle(.plain)
+						Text(st.book == book ? (st.drinks.count == 1 ? T("1 cocktail") : T("{n} cocktails", ["n": st.drinks.count])) : st.book.short)
+							.font(Theme.mono(11.5)).foregroundStyle(Theme.faint)
+					}
+					Text(T(st.tip)).font(Theme.sans(14.5)).foregroundStyle(Theme.soft).fixedSize(horizontal: false, vertical: true)
+					if st.book == book {
+						let ix = BarIndex.of(book), o = ix.owned(member.items)
+						let tid = book.store.ingredientId(st.target) ?? -1
+						let yes = owns ? st.drinks.filter { d in ix.recById(d.id).map { ix.missingKeys($0, o).allSatisfy { k in k == "i:\(tid)" || k == "b:" + (ix.ingById[tid]?.kind ?? "-") } && !ix.missingKeys($0, o).isEmpty } ?? false } : []
+						if !yes.isEmpty {
+							Text(yes.count == 1 ? T("You can make 1 of these with {ingredient}", ["ingredient": ingt]) : T("You can make {n} of these with {ingredient}", ["n": yes.count, "ingredient": ingt]))
+								.font(Theme.sans(14, .semibold)).foregroundStyle(Theme.acc)
+						}
+						let ids = Set(yes.map(\.id))
+						let shown = yes + st.drinks.filter { !ids.contains($0.id) }
+						CardGrid(book: book, drinks: Array(shown.prefix(max(8, yes.count))))
+						if shown.count > max(8, yes.count) {
+							NavigationLink(value: Route.ingredient(book.key, name: st.target, with: "")) {
+								Text(T("All {n} with {ingredient} →", ["n": st.drinks.count, "ingredient": T(st.target)])).font(Theme.sans(14)).foregroundStyle(Theme.acc)
+							}.buttonStyle(.plain)
+						}
+					} else {
+						NavigationLink(value: Route.ingredient(st.book.key, name: st.target, with: "")) {
+							Text(st.drinks.count == 1 ? T("1 cocktail at {other} →", ["other": st.book.short]) : T("{n} cocktails at {other} →", ["n": st.drinks.count, "other": st.book.short]))
+								.font(Theme.sans(14)).foregroundStyle(Theme.acc)
+						}.buttonStyle(.plain)
+					}
+				}
+				.padding(.bottom, 26)
+			}
+		}.padding(.top, 24)
 	}
 }
 

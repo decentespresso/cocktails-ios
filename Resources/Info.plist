@@ -40,6 +40,8 @@
 	</dict>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Decent Cocktails connects to your Half Decent Scale to weigh each ingredient as you make a cocktail.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Take a photo of a bottle so Decent Cocktails can add it to Your Bar.</string>
 	<key>UIAppFonts</key>
 	<array>
 		<string>Archivo.ttf</string>

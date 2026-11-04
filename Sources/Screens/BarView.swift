@@ -1,8 +1,10 @@
 import SwiftUI
 
-/// /<book>/bar: Your Bar (pdt_bar_page + cocktails/js/bar.js). Tabs Wishlist, Made (by day),
-/// You can make, Ingredients (what you own, add more, and What to buy); one inventory per
-/// location, shared by every book and with the website.
+/// /<book>/bar: Your Bar (pdt_bar_page + cocktails/js/bar.js). Tabs Liked, Made (by day),
+/// You can make (plus With a stand-in), Ingredients (what you own, add more, What to buy) and
+/// Settings (sharing); one inventory per location, shared by every book and with the website.
+/// The location menu also lists other members' bars you've added: theirs shows They Liked /
+/// They Made, whatever they share.
 struct BarView: View {
 	let book: Book
 	@State var tab: String
@@ -20,6 +22,11 @@ struct BarView: View {
 	@State private var newLoc = false
 	@State private var locName = ""
 	@State private var confirmDelete = false
+	/// another member's bar being looked at (nil = your own), and what they share
+	@State private var viewing: Member.Person?
+	@State private var other: Member.Shared?
+	@State private var showPeople = false
+	@State private var showPhoto = false
 
 	private var ix: BarIndex { BarIndex.of(book) }
 	private var recById: [Int: BarIndex.Rec] { Dictionary(ix.recipes.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a }) }
@@ -28,7 +35,7 @@ struct BarView: View {
 		PageScroll {
 			Crumb(items: [(T("Home"), .home(book.key)), (T("Your Bar"), nil)]).padding(.top, 10)
 			HStack(alignment: .center) {
-				H1(T("Your Bar"))
+				H1(viewing.map { T("{name}'s bar", ["name": $0.name]) } ?? T("Your Bar"))
 				Spacer()
 				if account.signedIn { locationMenu }
 			}
@@ -41,6 +48,7 @@ struct BarView: View {
 				case "wish": marksView("wish")
 				case "made": marksView("made")
 				case "make": makeView
+				case "set": settingsView
 				default: ingredientsView
 				}
 			}
@@ -48,7 +56,9 @@ struct BarView: View {
 		// an empty bar opens on Ingredients (bar.js buildShell), once the bar has loaded
 		.onAppear { if member.loaded && member.items.isEmpty && tab == "make" { tab = "ing" } }
 		.onChange(of: member.loaded) { _, l in if l && member.items.isEmpty && tab == "make" { tab = "ing" } }
-		.refreshable { await member.load() }
+		.refreshable { await member.load(); if let v = viewing { other = await member.shared(v.u, book) } }
+		.sheet(isPresented: $showPeople) { PeopleSheet(book: book) { p in look(p) } }
+		.sheet(isPresented: $showPhoto) { BottlePhotoSheet() }
 		.alert(T("Rename this location:"), isPresented: $renaming) {
 			TextField("", text: $locName)
 			Button(T("Rename")) { member.renameLocation(locName) }
@@ -70,15 +80,26 @@ struct BarView: View {
 	private var locationMenu: some View {
 		Menu {
 			ForEach(member.bar.locs) { l in
-				Button { member.setLocation(l.id) } label: { if l.id == member.bar.cur { Label(l.name, systemImage: "checkmark") } else { Text(l.name) } }
+				Button { look(nil); member.setLocation(l.id) } label: { if viewing == nil && l.id == member.bar.cur { Label(l.name, systemImage: "checkmark") } else { Text(l.name) } }
+			}
+			if !member.following.isEmpty {
+				Divider()
+				ForEach(member.following) { p in
+					Button { look(p) } label: { if viewing?.u == p.u { Label(p.name, systemImage: "checkmark") } else { Text(p.name) } }
+				}
 			}
 			Divider()
-			Button(T("Rename") + "…") { locName = member.bar.current.name; renaming = true }
-			Button("+ " + T("New location")) { locName = ""; newLoc = true }
-			if member.bar.locs.count > 1 { Button(T("Delete") + "…", role: .destructive) { confirmDelete = true } }
+			Button(T("Other people's bars") + "…") { showPeople = true }
+			if viewing == nil {
+				Button(T("Rename") + "…") { locName = member.bar.current.name; renaming = true }
+				Button("+ " + T("New location")) { locName = ""; newLoc = true }
+				if member.bar.locs.count > 1 { Button(T("Delete") + "…", role: .destructive) { confirmDelete = true } }
+			} else {
+				Button(T("Remove from my list"), role: .destructive) { if let v = viewing { member.unfollow(v.u); look(nil) } }
+			}
 		} label: {
 			HStack(spacing: 6) {
-				Text(member.bar.current.name).font(Theme.mono(13)).foregroundStyle(Theme.ink)
+				Text(viewing?.name ?? member.bar.current.name).font(Theme.mono(13)).foregroundStyle(Theme.ink)
 				Text("▾").font(.system(size: 9)).foregroundStyle(Theme.faint)
 			}
 			.padding(.horizontal, 12).padding(.vertical, 7)
@@ -87,12 +108,28 @@ struct BarView: View {
 		.disabled(!member.canEditBar)
 	}
 
-	private var ownMarks: (wish: [Int], made: [Int]) { (member.wish.filter { recById[$0] != nil }, member.made.filter { recById[$0] != nil }) }
+	/// look at another member's bar (nil: back to your own)
+	private func look(_ p: Member.Person?) {
+		let was = viewing
+		viewing = p; other = nil
+		if let p {
+			if !member.following.contains(where: { $0.u == p.u }) { member.follow(p) }
+			tab = "wish"
+			Task { other = await member.shared(p.u, book); if let o = other, o.wish == nil, o.made != nil { tab = "made" } }
+		} else if was != nil && tab != "wish" && tab != "made" { tab = "make" }
+	}
+	/// the lists shown: yours, or the member's you're looking at (what they share)
+	private var allWish: [Int] { viewing == nil ? member.wish : (other?.wish ?? []) }
+	private var allMade: [Int] { viewing == nil ? member.made : (other?.made ?? []) }
+	private var madeOn: [String: Int] { viewing == nil ? member.madeOn : (other?.madeOn ?? [:]) }
+	private var ownMarks: (wish: [Int], made: [Int]) { (allWish.filter { recById[$0] != nil }, allMade.filter { recById[$0] != nil }) }
 
 	private var tabs: some View {
 		let o = ix.owned(member.items)
-		let rows: [(String, String, Int)] = [("wish", T("Wishlist"), ownMarks.wish.count), ("made", T("Made"), ownMarks.made.count),
-			("make", T("You can make"), ix.makeable(o).count), ("ing", T("Ingredients"), member.items.count)]
+		let rows: [(String, String, Int?)] = viewing != nil
+			? (other?.wish != nil ? [("wish", T("They Liked"), ownMarks.wish.count)] : []) + (other?.made != nil ? [("made", T("They Made"), ownMarks.made.count)] : [])
+			: [("wish", T("Liked"), ownMarks.wish.count), ("made", T("Made"), ownMarks.made.count),
+			   ("make", T("You can make"), ix.makeable(o).count), ("ing", T("Ingredients"), member.items.count), ("set", T("Settings"), nil)]
 		// one line that scrolls sideways when the tabs don't fit (a phone, or a longer language),
 		// the chosen tab kept in view
 		return VStack(spacing: 0) {
@@ -101,8 +138,10 @@ struct BarView: View {
 					Button { tab = k } label: {
 						HStack(spacing: 6) {
 							Text(label).font(Theme.sans(15, tab == k ? .semibold : .medium)).foregroundStyle(tab == k ? Theme.ink : Theme.soft)
-							Text("\(n)").font(Theme.mono(11.5)).foregroundStyle(tab == k ? Theme.acc : Theme.faint)
-								.padding(.horizontal, 6).padding(.vertical, 1).background(Theme.panel, in: Capsule())
+							if let n {
+								Text("\(n)").font(Theme.mono(11.5)).foregroundStyle(tab == k ? Theme.acc : Theme.faint)
+									.padding(.horizontal, 6).padding(.vertical, 1).background(Theme.panel, in: Capsule())
+							}
 						}
 						.padding(.horizontal, 14).padding(.vertical, 9)
 						.overlay(alignment: .bottom) { if tab == k { Rectangle().fill(Theme.acc).frame(height: 2) } }
@@ -119,15 +158,20 @@ struct BarView: View {
 
 	@ViewBuilder private func marksView(_ kind: String) -> some View {
 		let ids = kind == "wish" ? ownMarks.wish : ownMarks.made
-		let all = kind == "wish" ? member.wish : member.made
+		let all = kind == "wish" ? allWish : allMade
 		VStack(alignment: .leading, spacing: 0) {
-			Text(kind == "wish" ? T("Wishlist") : T("Made")).font(Theme.mono(12)).kerning(0.6).foregroundStyle(Theme.faint)
+			Text(viewing != nil ? (kind == "wish" ? T("They Liked") : T("They Made")) : (kind == "wish" ? T("Liked") : T("Made"))).font(Theme.mono(12)).kerning(0.6).foregroundStyle(Theme.faint)
 				.textCase(.uppercase).padding(.top, 22).padding(.bottom, 14)
-			if ids.isEmpty && otherBookCounts(all).isEmpty {
-				empty(kind == "wish" ? T("No cocktails on your wishlist yet — tap the heart on any recipe.") : T("Nothing marked made yet — tap Made on a recipe, or finish one on the scale."))
+			if let v = viewing, other?.gone == true {
+				empty(T("{name} no longer shares their bar.", ["name": v.name]))
+			} else if viewing != nil && other == nil {
+				ProgressView().padding(.vertical, 18)
+			} else if ids.isEmpty && otherBookCounts(all).isEmpty {
+				empty(viewing != nil ? (kind == "wish" ? T("Nothing liked yet.") : T("Nothing marked made yet."))
+					: (kind == "wish" ? T("No liked cocktails yet — tap the heart on any recipe.") : T("Nothing marked made yet — tap Made on a recipe, or finish one on the scale.")))
 			}
 			if kind == "made" { madeDays(ids) } else { grid(ids.compactMap { recById[$0] }.sorted(by: BarIndex.byPop)) }
-			ForEach(otherBookCounts(all), id: \.0.key) { ob, n in
+			ForEach(viewing == nil ? otherBookCounts(all) : [], id: \.0.key) { ob, n in
 				NavigationLink(value: Route.bar(ob.key, tab: kind)) {
 					Text(T("{n} more at {other}", ["n": n, "other": ob.short])).font(Theme.sans(14.4)).foregroundStyle(Theme.acc).underline()
 				}.buttonStyle(.plain).padding(.top, 16)
@@ -151,7 +195,8 @@ struct BarView: View {
 	/// by the day each was last made: Today, Yesterday, then the date; undated last under Earlier
 	@ViewBuilder private func madeDays(_ ids: [Int]) -> some View {
 		let recs = ids.compactMap { recById[$0] }
-		let ts: (BarIndex.Rec) -> Int = { member.madeOn[String($0.id)] ?? 0 }
+		let on = madeOn
+		let ts: (BarIndex.Rec) -> Int = { on[String($0.id)] ?? 0 }
 		let dated = recs.filter { ts($0) > 0 }.sorted { ts($0) != ts($1) ? ts($0) > ts($1) : BarIndex.byPop($0, $1) }
 		let undated = recs.filter { ts($0) == 0 }.sorted(by: BarIndex.byPop)
 		if dated.isEmpty {
@@ -229,6 +274,23 @@ struct BarView: View {
 					return gens.isEmpty ? nil : T("with your {items}", ["items": gens.joined(separator: ", ")])
 				}
 			}
+			standinsView(o)
+		}
+	}
+	/// "With a stand-in" (bar.js renderStandins): a bottle you own stands in for what's missing
+	@ViewBuilder private func standinsView(_ o: BarIndex.Owned) -> some View {
+		let rows = member.items.isEmpty ? [] : ix.standins(o)
+		if !rows.isEmpty {
+			let swaps = Dictionary(rows.map { ($0.rec.id, $0.swaps) }, uniquingKeysWith: { a, _ in a })
+			HStack(spacing: 8) {
+				Text(T("With a stand-in").uppercased()).font(Theme.mono(12)).kerning(0.6).foregroundStyle(Theme.faint)
+				Text("\(rows.count)").font(Theme.mono(11)).foregroundStyle(Theme.faint).padding(.horizontal, 6).padding(.vertical, 1).overlay(Capsule().stroke(Theme.line2))
+			}.padding(.top, 24)
+			Text(T("You don't have everything these call for, but a bottle you own can stand in for what's missing.")).font(Theme.sans(14)).foregroundStyle(Theme.soft)
+				.fixedSize(horizontal: false, vertical: true)
+			grid(rows.map(\.rec)) { r in
+				(swaps[r.id] ?? []).map { T("{have} instead of {want}", ["have": ix.name($0.have), "want": ix.name($0.want)]) }.joined(separator: "\n")
+			}
 		}
 	}
 
@@ -295,6 +357,7 @@ struct BarView: View {
 			Text(ix.itemLabel(it)).font(Theme.sans(14)).foregroundStyle(Theme.ink)
 			if it.t == "b" { kindTag(it.b ?? "") }
 			if it.t == "c" { tag(ix.kindByKey[it.b ?? ""]?.label ?? (it.b ?? "")) }
+			if it.t == "i", let id = it.id, ix.ingById[id] == nil, PendingBottles.get(id) != nil { tag(T("your photo")) }
 		}
 	}
 	private func itemRoute(_ it: Bar.Item) -> Route? {
@@ -329,9 +392,23 @@ struct BarView: View {
 				.overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.line))
 			}
 			if handOpen { handEntry } else {
-				Button { handDesc = ""; handOpen = true } label: { Text(T("Can't find it? Add by hand →")).font(Theme.sans(14)).foregroundStyle(Theme.soft) }.buttonStyle(.plain)
+				ViewThatFits(in: .horizontal) {
+					HStack {
+						handLink
+						Spacer(minLength: 12)
+						photoLink
+					}
+					VStack(alignment: .leading, spacing: 8) { handLink; photoLink }
+				}
 			}
 		}
+	}
+	private var handLink: some View {
+		Button { handDesc = ""; handOpen = true } label: { Text(T("Can't find it? Add by hand →")).font(Theme.sans(14)).foregroundStyle(Theme.soft) }.buttonStyle(.plain)
+	}
+	/// a bottle we don't know: photograph it (POST /cocktails/api/me/bottles)
+	private var photoLink: some View {
+		Button { showPhoto = true } label: { Text(T("Bottle not here? Take a photo →")).font(Theme.sans(14)).foregroundStyle(Theme.soft) }.buttonStyle(.plain)
 	}
 	private func resultRow(_ it: Bar.Item) -> some View {
 		let owned = member.has(it)
